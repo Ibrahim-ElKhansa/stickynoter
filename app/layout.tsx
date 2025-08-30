@@ -1,7 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
-import { Navbar } from "@/components/organisms/Navbar";
 import { AuthProvider } from "@/lib/auth/AuthContext";
+import { StickyNoteProvider } from "@/lib/context/StickyNoteContext";
+import { NavbarWithStickyNotes } from "./NavbarWithStickyNotes";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -19,7 +20,6 @@ export const metadata: Metadata = {
   description: "A digital sticky note application",
   icons: {
     icon: [
-      { url: "/favicon.ico" },
       { url: "/favicon-16x16.png", sizes: "16x16", type: "image/png" },
       { url: "/favicon-32x32.png", sizes: "32x32", type: "image/png" },
     ],
@@ -39,15 +39,19 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
+    <html lang="en" className="dark h-full overflow-hidden">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-red-950/90 text-white h-full m-0 p-0 overflow-hidden`}
       >
         <AuthProvider>
-          <div className="flex min-h-screen flex-col">
-            <Navbar />
-            {children}
-          </div>
+          <StickyNoteProvider>
+            <div className="flex min-h-screen flex-col w-full h-full overflow-hidden">
+              <NavbarWithStickyNotes />
+              <div className="flex-1 w-full h-full overflow-hidden">
+                {children}
+              </div>
+            </div>
+          </StickyNoteProvider>
         </AuthProvider>
       </body>
     </html>
