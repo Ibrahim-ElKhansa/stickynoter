@@ -1,5 +1,7 @@
 # StickyNoter
 
+Live site: https://stickynoter.vercel.app/
+
 A modern, interactive digital sticky notes application built with Next.js and React. Create, organize, and manage your thoughts with colorful sticky notes on an infinite canvas.
 
 ## What it does
@@ -62,12 +64,30 @@ NEXT_PUBLIC_SUPABASE_URL=your_supabase_url
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
 ```
 
+Optional but recommended for deployments:
+```env
+# Used by docs/integrations; not required by the app at runtime
+NEXT_PUBLIC_SITE_URL=https://stickynoter.vercel.app
+```
+
 4. Run the development server:
 ```bash
 npm run dev
 ```
 
 5. Open [http://localhost:3000](http://localhost:3000) in your browser to start using StickyNoter!
+
+### Authentication configuration (Supabase)
+
+If OAuth redirects send you back to localhost when using the production site, ensure these settings in Supabase:
+
+- In Authentication → URL Configuration:
+	- Site URL: https://stickynoter.vercel.app
+	- Additional Redirect URLs:
+		- https://stickynoter.vercel.app/auth/callback
+		- http://localhost:3000/auth/callback (for local dev)
+		- (optional) any preview URLs you use
+- In Authentication → Providers → Google: Authorized redirect URI should be your Supabase callback URL (format: https://<your-project-ref>.supabase.co/auth/v1/callback). Do not put your website URL there.
 
 ## Usage
 
