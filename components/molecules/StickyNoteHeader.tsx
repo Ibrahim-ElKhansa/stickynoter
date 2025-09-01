@@ -19,7 +19,7 @@ const StickyNoteHeader = React.forwardRef<HTMLDivElement, StickyNoteHeaderProps>
     onTitleChange,
     onSettingsClick,
     onCloseClick,
-    titlePlaceholder = "Note title...",
+    titlePlaceholder = "New Note",
     disabled = false,
     ...props
   }, ref) => {

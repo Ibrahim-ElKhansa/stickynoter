@@ -7,7 +7,7 @@ import { User, Session } from '@supabase/supabase-js'
 interface AuthContextType {
   user: User | null
   session: Session | null
-  loading: boolean
+  authLoading: boolean
   signIn: () => Promise<void>
   signOut: () => Promise<void>
 }
@@ -17,7 +17,7 @@ const AuthContext = createContext<AuthContextType | undefined>(undefined)
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null)
   const [session, setSession] = useState<Session | null>(null)
-  const [loading, setLoading] = useState(true)
+  const [authLoading, setAuthLoading] = useState(true)
   const supabase = createClient()
 
   useEffect(() => {
@@ -26,7 +26,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       const { data: { session } } = await supabase.auth.getSession()
       setSession(session)
       setUser(session?.user ?? null)
-      setLoading(false)
+      setAuthLoading(false)
     }
 
     getSession()
@@ -36,7 +36,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       async (event, session) => {
         setSession(session)
         setUser(session?.user ?? null)
-        setLoading(false)
+        setAuthLoading(false)
       }
     )
 
@@ -59,7 +59,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const value = {
     user,
     session,
-    loading,
+    authLoading,
     signIn,
     signOut
   }

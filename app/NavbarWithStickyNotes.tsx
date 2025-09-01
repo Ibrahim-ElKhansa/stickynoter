@@ -11,15 +11,19 @@ export function NavbarWithStickyNotes() {
 
   const handleAddNote = async () => {
     
-    // Create note at the center of the current viewport
+    // Create note at the center of the current viewport with some randomization
     const center = getViewportCenter()
+    
+    // Add random offset within a range (±100px in both directions)
+    const randomOffsetX = (Math.random() - 0.5) * 200
+    const randomOffsetY = (Math.random() - 0.5) * 200
     
     try {
       await createNote({
-        title: 'New Note',
-        content: 'Click here to edit...',
-        position_x: center.x,
-        position_y: center.y,
+        title: '',
+        content: '',
+        position_x: center.x + randomOffsetX,
+        position_y: center.y + randomOffsetY,
         width: 300,
         height: 200,
         z_index: 1,

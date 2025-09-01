@@ -49,7 +49,7 @@ interface StickyNoteContextType {
 // Initial state
 const initialState: StickyNoteState = {
   notes: [],
-  loading: false,
+  loading: true,
   error: null,
 }
 
@@ -146,120 +146,102 @@ export function StickyNoteProvider({ children }: { children: React.ReactNode }) 
 
   // Create a new sticky note
   const createNote = useCallback(async (input: CreateStickyNoteInput) => {
-    try {
-      dispatch({ type: 'SET_LOADING', payload: true })
-      
-      const newNote: StickyNote = {
-        id: generateId(),
-        userId: user?.id || 'anonymous',
-        title: input.title || '',
-        content: input.content || '',
-        settings: {
-          backgroundColor: input.settings?.backgroundColor || 'yellow',
-        },
-        positionX: input.position_x,
-        positionY: input.position_y,
-        width: input.width || 350,
-        height: input.height || 300,
-        zIndex: input.z_index || 1,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      }
+    const newNote: StickyNote = {
+      id: generateId(),
+      userId: user?.id || 'anonymous',
+      title: input.title || '',
+      content: input.content || '',
+      settings: {
+        backgroundColor: input.settings?.backgroundColor || 'yellow',
+      },
+      positionX: input.position_x,
+      positionY: input.position_y,
+      width: input.width || 350,
+      height: input.height || 300,
+      zIndex: input.z_index || 1,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    }
 
-      // Save to Supabase database if user is authenticated AND Supabase is configured
-      if (user && process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-        try {
-          const dbNote = mapStickyNoteToDB(newNote)
-          const { error } = await supabase
-            .from('sticky_notes')
-            .insert([dbNote])
+    // Optimistic create - add to local state immediately for instant UI feedback
+    dispatch({ type: 'ADD_NOTE', payload: newNote })
 
-          if (error) {
-            console.warn('Failed to save to database:', error)
-            // Don't throw error, just log it - allow local-only operation
-          }
-        } catch (dbError) {
-          console.warn('Database not configured or failed to save:', dbError)
-          // Continue with local-only operation
+    // Save to Supabase database in the background (if user is authenticated)
+    if (user && process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      try {
+        const dbNote = mapStickyNoteToDB(newNote)
+        const { error } = await supabase
+          .from('sticky_notes')
+          .insert([dbNote])
+
+        if (error) {
+          console.warn('Failed to save to database:', error)
+          // Could potentially remove the note from state here if needed
+          // But for now, we'll just log the error since the local create already happened
         }
+      } catch (dbError) {
+        console.warn('Database not configured or failed to save:', dbError)
+        // Local creation already completed, so this is just a background operation
       }
-
-      dispatch({ type: 'ADD_NOTE', payload: newNote })
-    } catch (error) {
-      console.error('Error in createNote:', error)
-      dispatch({ 
-        type: 'SET_ERROR', 
-        payload: error instanceof Error ? error.message : 'Failed to create note' 
-      })
     }
   }, [user, supabase])
 
   // Update an existing sticky note
   const updateNote = useCallback(async (input: UpdateStickyNoteInput) => {
-    try {
-      dispatch({ type: 'SET_LOADING', payload: true })
-      
-      const existingNote = state.notes.find(note => note.id === input.id)
-      if (!existingNote) {
-        throw new Error('Note not found')
-      }
+    const existingNote = state.notes.find(note => note.id === input.id)
+    if (!existingNote) {
+      console.error('Note not found for update:', input.id)
+      return
+    }
 
-      const updatedNote: StickyNote = {
-        ...existingNote,
-        title: input.title ?? existingNote.title,
-        content: input.content ?? existingNote.content,
-        settings: {
-          ...existingNote.settings,
-          ...input.settings,
-        },
-        positionX: input.positionX ?? existingNote.positionX,
-        positionY: input.positionY ?? existingNote.positionY,
-        width: input.width ?? existingNote.width,
-        height: input.height ?? existingNote.height,
-        zIndex: input.zIndex ?? existingNote.zIndex,
-        updatedAt: new Date(),
-      }
+    const updatedNote: StickyNote = {
+      ...existingNote,
+      title: input.title ?? existingNote.title,
+      content: input.content ?? existingNote.content,
+      settings: {
+        ...existingNote.settings,
+        ...input.settings,
+      },
+      positionX: input.positionX ?? existingNote.positionX,
+      positionY: input.positionY ?? existingNote.positionY,
+      width: input.width ?? existingNote.width,
+      height: input.height ?? existingNote.height,
+      zIndex: input.zIndex ?? existingNote.zIndex,
+      updatedAt: new Date(),
+    }
 
-      // Update in local state immediately (optimistic update)
-      dispatch({ type: 'UPDATE_NOTE', payload: updatedNote })
+    // Optimistic update - update local state immediately for instant UI feedback
+    dispatch({ type: 'UPDATE_NOTE', payload: updatedNote })
 
-      // Schedule auto-save to database if user is authenticated
-      if (user) {
-        scheduleSave(input)
-      }
-    } catch (error) {
-      dispatch({ 
-        type: 'SET_ERROR', 
-        payload: error instanceof Error ? error.message : 'Failed to update note' 
-      })
+    // Schedule auto-save to database if user is authenticated
+    if (user) {
+      scheduleSave(input)
     }
   }, [user, state.notes, scheduleSave])
 
   // Delete a sticky note
   const deleteNote = useCallback(async (id: string) => {
-    if (!user) {
-      dispatch({ type: 'SET_ERROR', payload: 'User must be authenticated to delete notes' })
-      return
-    }
+    // Optimistic delete - remove from local state immediately for instant UI feedback
+    dispatch({ type: 'DELETE_NOTE', payload: id })
 
-    try {
-      dispatch({ type: 'SET_LOADING', payload: true })
-      
-      // Delete from Supabase database
-      const { error } = await supabase
-        .from('sticky_notes')
-        .delete()
-        .eq('id', id)
-        .eq('user_id', user.id)
+    // Handle database deletion in the background (if user is authenticated)
+    if (user && process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
+      try {
+        const { error } = await supabase
+          .from('sticky_notes')
+          .delete()
+          .eq('id', id)
+          .eq('user_id', user.id)
 
-      if (error) throw error
-
-      dispatch({ type: 'DELETE_NOTE', payload: id })
-    } catch (error) {
-      dispatch({ 
-        type: 'SET_ERROR', 
-        payload: error instanceof Error ? error.message : 'Failed to delete note' 
-      })
+        if (error) {
+          console.warn('Failed to delete from database:', error)
+          // Could potentially add the note back to state here if needed
+          // But for now, we'll just log the error since the local delete already happened
+        }
+      } catch (dbError) {
+        console.warn('Database not configured or failed to delete:', dbError)
+        // Local deletion already completed, so this is just a background operation
+      }
     }
   }, [user, supabase])
 
@@ -302,6 +284,7 @@ export function StickyNoteProvider({ children }: { children: React.ReactNode }) 
   const loadNotes = useCallback(async () => {
     if (!user || !process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
       dispatch({ type: 'SET_NOTES', payload: [] })
+      dispatch({ type: 'SET_LOADING', payload: false })
       return
     }
 
@@ -324,6 +307,8 @@ export function StickyNoteProvider({ children }: { children: React.ReactNode }) 
       console.warn('Failed to load notes from database:', error)
       // Set empty array on error instead of showing error to user
       dispatch({ type: 'SET_NOTES', payload: [] })
+    } finally {
+      dispatch({ type: 'SET_LOADING', payload: false })
     }
   }, [user, supabase])
 

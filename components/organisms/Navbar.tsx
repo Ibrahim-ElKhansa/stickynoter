@@ -13,7 +13,7 @@ interface NavbarProps {
 }
 
 export function Navbar({ className = '', onAddNote }: NavbarProps) {
-  const { user, loading, signIn, signOut } = useAuth()
+  const { user, authLoading, signIn, signOut } = useAuth()
 
   const handleAuthAction = async () => {
     if (user) {
@@ -46,10 +46,10 @@ export function Navbar({ className = '', onAddNote }: NavbarProps) {
         <Button 
           variant="outline" 
           onClick={handleAuthAction}
-          disabled={loading}
+          disabled={authLoading}
           className="border-red-700/50 text-red-300 hover:bg-red-900/30 hover:text-red-200 hover:border-red-600"
         >
-          {loading ? 'Loading...' : user ? 'Sign out' : 'Sign in'}
+          {authLoading ? 'Loading...' : user ? 'Sign out' : 'Sign in'}
         </Button>
       </div>
     </header>
