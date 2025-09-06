@@ -15,6 +15,26 @@ export default function Home() {
 
   return (
     <div className="w-full h-full bg-red-950/90 overflow-hidden">
+      {/* SEO Content - Hidden but accessible to search engines */}
+      <div className="sr-only">
+        <h1>StickyNoter - Digital Sticky Notes Application</h1>
+        <p>
+          Create, organize, and manage your ideas with our intuitive digital sticky notes app. 
+          Features include drag-and-drop functionality, color coding, resizable notes, infinite canvas, 
+          and real-time synchronization. Perfect for brainstorming, project planning, mind mapping, 
+          and visual organization. Free online sticky note tool for productivity and collaboration.
+        </p>
+        <h2>Key Features</h2>
+        <ul>
+          <li>Drag and drop sticky notes on infinite canvas</li>
+          <li>Resize notes to fit your content</li>
+          <li>Color-code notes for better organization</li>
+          <li>Auto-save functionality with real-time sync</li>
+          <li>Pan and zoom across unlimited workspace</li>
+          <li>User authentication and personal note storage</li>
+        </ul>
+      </div>
+      
       <PanCanvas className="w-full h-full">
         {/* Loading spinner */}
         {isLoading ? (

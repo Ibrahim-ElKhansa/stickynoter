@@ -1,0 +1,50 @@
+{
+  "name": "StickyNoter - Digital Sticky Notes & Visual Organization Tool",
+  "short_name": "StickyNoter",
+  "description": "Transform your ideas into organized digital sticky notes. Create, drag, resize, and color-code notes on an infinite canvas.",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#991b1b",
+  "theme_color": "#991b1b",
+  "orientation": "any",
+  "categories": ["productivity", "business", "utilities"],
+  "lang": "en-US",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "/android-chrome-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable any"
+    },
+    {
+      "src": "/android-chrome-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable any"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-32x32.png",
+      "sizes": "32x32",
+      "type": "image/png"
+    },
+    {
+      "src": "/favicon-16x16.png",
+      "sizes": "16x16",
+      "type": "image/png"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "/opengraph-image.png",
+      "sizes": "1200x630",
+      "type": "image/png",
+      "label": "StickyNoter main interface with colorful sticky notes"
+    }
+  ]
+}

@@ -25,7 +25,7 @@ export function Navbar({ className = '', onAddNote }: NavbarProps) {
 
   return (
     <header className={`w-full border-b border-red-900/20 bg-stone-900 shadow-lg ${className}`}>
-      <div className="container mx-auto flex h-16 items-center justify-between px-4">
+      <div className="container mx-auto flex h-20 items-center justify-between px-4">
         {/* Left side - Logo */}
         <Logo />
         
@@ -36,7 +36,7 @@ export function Navbar({ className = '', onAddNote }: NavbarProps) {
             onClick={onAddNote}
             className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white border-red-700"
           >
-            <Plus size={16} />
+            <Plus size={18} />
             Add Note
           </Button>
           <SaveStatus />
