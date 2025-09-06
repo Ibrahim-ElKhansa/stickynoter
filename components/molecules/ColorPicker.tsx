@@ -10,6 +10,9 @@ const colorOptions: { value: StickyNoteColor; label: string }[] = [
   { value: "green", label: "Green" },
   { value: "pink", label: "Pink" },
   { value: "purple", label: "Purple" },
+  { value: "red", label: "Red" },
+  { value: "teal", label: "Teal" },
+  { value: "gray", label: "Gray" },
 ]
 
 interface ColorPickerProps {

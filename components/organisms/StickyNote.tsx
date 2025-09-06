@@ -28,6 +28,9 @@ const stickyNoteVariants = {
   green: "bg-green-300 border-green-500 shadow-green-500/20",
   pink: "bg-pink-300 border-pink-500 shadow-pink-500/20",
   purple: "bg-purple-300 border-purple-500 shadow-purple-500/20",
+  red: "bg-red-300 border-red-500 shadow-red-500/20",
+  teal: "bg-teal-300 border-teal-500 shadow-teal-500/20",
+  gray: "bg-gray-300 border-gray-500 shadow-gray-500/20",
 }
 
 const StickyNote = React.forwardRef<HTMLDivElement, StickyNoteProps>(
@@ -86,7 +89,7 @@ const StickyNote = React.forwardRef<HTMLDivElement, StickyNoteProps>(
                       key={color}
                       onClick={() => onColorChange(color as StickyNoteColor)}
                       className={cn(
-                        "w-8 h-8 rounded-full border-2 hover:scale-110 transition-transform",
+                        "w-8 h-8 rounded-full border-2 hover:scale-110 transition-transform cursor-pointer",
                         stickyNoteVariants[color as StickyNoteColor],
                         variant === color ? "ring-2 ring-gray-600 ring-offset-1" : "border-gray-300"
                       )}

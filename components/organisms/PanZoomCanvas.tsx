@@ -22,9 +22,6 @@ export function PanCanvas({ children, className }: PanCanvasProps) {
       setIsPanning(true)
       setLastPanPoint({ x: e.clientX, y: e.clientY })
       e.preventDefault()
-      
-      // Change cursor during pan
-      document.body.style.cursor = 'grabbing'
     }
   }, [])
 
@@ -52,7 +49,6 @@ export function PanCanvas({ children, className }: PanCanvasProps) {
   const handleMouseUp = useCallback(() => {
     if (isPanning) {
       setIsPanning(false)
-      document.body.style.cursor = 'default'
     }
   }, [isPanning])
 
@@ -97,7 +93,6 @@ export function PanCanvas({ children, className }: PanCanvasProps) {
       return () => {
         document.removeEventListener('mousemove', handleMouseMove)
         document.removeEventListener('mouseup', handleMouseUp)
-        document.body.style.cursor = 'default'
       }
     }
   }, [isPanning, handleMouseMove, handleMouseUp])
@@ -126,7 +121,7 @@ export function PanCanvas({ children, className }: PanCanvasProps) {
   return (
     <div
       ref={containerRef}
-      className={`relative w-full h-full overflow-hidden cursor-grab ${className}`}
+      className={`relative w-full h-full overflow-hidden ${isPanning ? 'cursor-grabbing' : 'cursor-grab'} ${className}`}
       onMouseDown={handleMouseDown}
       style={{
         backgroundColor: '#1a1a1a', // Dark gray background

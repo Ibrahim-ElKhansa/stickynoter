@@ -102,8 +102,8 @@ const DraggableStickyNote = React.forwardRef<HTMLDivElement, DraggableStickyNote
         ref={ref}
         data-note-id={note.id}
         className={cn(
-          "absolute cursor-move transition-shadow duration-200 z-10 opacity-100",
-          isDragging && "shadow-lg z-50",
+          "absolute transition-shadow duration-200 z-10 opacity-100",
+          isDragging ? "cursor-grabbing shadow-lg z-50" : "cursor-grab",
           className
         )}
         style={{
@@ -117,7 +117,11 @@ const DraggableStickyNote = React.forwardRef<HTMLDivElement, DraggableStickyNote
       >
         <ResizableStickyNote
           note={note}
-          className="pointer-events-auto select-text opacity-100 visible"
+          className={cn(
+            "pointer-events-auto select-text opacity-100 visible",
+            !isDragging && "hover:cursor-grab",
+            isDragging && "cursor-grabbing"
+          )}
         />
       </div>
     )

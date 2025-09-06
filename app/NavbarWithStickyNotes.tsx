@@ -4,10 +4,20 @@ import React from 'react'
 import { Navbar } from "@/components/organisms/Navbar"
 import { useStickyNotes } from "@/lib/context/StickyNoteContext"
 import { usePanCanvas } from "@/hooks/usePanCanvas"
+import { StickyNoteColor } from "@/types/stickyNote"
 
 export function NavbarWithStickyNotes() {
   const { createNote } = useStickyNotes()
   const { getViewportCenter } = usePanCanvas()
+
+  const availableColors: StickyNoteColor[] = [
+    'yellow', 'orange', 'blue', 'green', 'pink', 'purple', 'red', 'teal', 'gray'
+  ]
+
+  const getRandomColor = (): StickyNoteColor => {
+    const randomIndex = Math.floor(Math.random() * availableColors.length)
+    return availableColors[randomIndex]
+  }
 
   const handleAddNote = async () => {
     
@@ -18,6 +28,9 @@ export function NavbarWithStickyNotes() {
     const randomOffsetX = (Math.random() - 0.5) * 200
     const randomOffsetY = (Math.random() - 0.5) * 200
     
+    // Get a random color for the new note
+    const randomColor = getRandomColor()
+    
     try {
       await createNote({
         title: '',
@@ -27,7 +40,7 @@ export function NavbarWithStickyNotes() {
         width: 300,
         height: 200,
         z_index: 1,
-        settings: { backgroundColor: 'yellow' }
+        settings: { backgroundColor: randomColor }
       })
     } catch (error) {
       console.error('Failed to create note:', error)

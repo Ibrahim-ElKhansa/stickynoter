@@ -1,4 +1,4 @@
-export type StickyNoteColor = 'yellow' | 'orange' | 'blue' | 'green' | 'pink' | 'purple'
+export type StickyNoteColor = 'yellow' | 'orange' | 'blue' | 'green' | 'pink' | 'purple' | 'red' | 'teal' | 'gray'
 
 export interface StickyNoteSettings {
   backgroundColor: StickyNoteColor

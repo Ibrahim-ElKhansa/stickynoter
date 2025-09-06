@@ -15,6 +15,9 @@ const colorButtonVariants = cva(
         pink: "bg-pink-300 border-pink-500 hover:border-pink-600",
         purple: "bg-purple-300 border-purple-500 hover:border-purple-600",
         orange: "bg-orange-300 border-orange-500 hover:border-orange-600",
+        red: "bg-red-300 border-red-500 hover:border-red-600",
+        teal: "bg-teal-300 border-teal-500 hover:border-teal-600",
+        gray: "bg-gray-300 border-gray-500 hover:border-gray-600",
       },
       size: {
         sm: "w-8 h-8",
