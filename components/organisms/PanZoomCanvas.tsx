@@ -56,7 +56,7 @@ export function PanCanvas({ children, className }: PanCanvasProps) {
     }
   }, [isPanning])
 
-  const handleWheel = useCallback((e: React.WheelEvent) => {
+  const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault()
     
     const container = containerRef.current
@@ -102,6 +102,18 @@ export function PanCanvas({ children, className }: PanCanvasProps) {
     }
   }, [isPanning, handleMouseMove, handleMouseUp])
 
+  // Add wheel event listener with passive: false
+  useEffect(() => {
+    const container = containerRef.current
+    if (!container) return
+
+    container.addEventListener('wheel', handleWheel, { passive: false })
+
+    return () => {
+      container.removeEventListener('wheel', handleWheel)
+    }
+  }, [handleWheel])
+
   // Emit initial transform state
   useEffect(() => {
     // Only emit initial state, not on every transform change
@@ -116,7 +128,6 @@ export function PanCanvas({ children, className }: PanCanvasProps) {
       ref={containerRef}
       className={`relative w-full h-full overflow-hidden cursor-grab ${className}`}
       onMouseDown={handleMouseDown}
-      onWheel={handleWheel}
       style={{
         backgroundColor: '#1a1a1a', // Dark gray background
         backgroundImage: `radial-gradient(circle, #666666 1px, transparent 1px)`, // Light gray dots

@@ -21,6 +21,17 @@ const ResizableStickyNote = React.forwardRef<HTMLDivElement, ResizableStickyNote
     const [startSize, setStartSize] = React.useState({ width: 0, height: 0 })
     const [showSettings, setShowSettings] = React.useState(false)
 
+    // Local state for debounced text input
+    const [localTitle, setLocalTitle] = React.useState(note.title)
+    const [localContent, setLocalContent] = React.useState(note.content)
+    const debounceTimeoutRef = React.useRef<NodeJS.Timeout | null>(null)
+
+    // Update local state when note prop changes (from external updates)
+    React.useEffect(() => {
+      setLocalTitle(note.title)
+      setLocalContent(note.content)
+    }, [note.title, note.content])
+
     const handleResizeStart = (e: React.MouseEvent, direction: string) => {
       e.preventDefault()
       e.stopPropagation()
@@ -116,12 +127,28 @@ const ResizableStickyNote = React.forwardRef<HTMLDivElement, ResizableStickyNote
       setShowSettings(false) // Close settings after color selection
     }
 
+    // Debounced text update function
+    const debouncedUpdateContent = React.useCallback((title: string, content: string) => {
+      if (debounceTimeoutRef.current) {
+        clearTimeout(debounceTimeoutRef.current)
+      }
+      
+      debounceTimeoutRef.current = setTimeout(() => {
+        // Only update if the values have actually changed
+        if (title !== note.title || content !== note.content) {
+          updateNoteContent(note.id, title, content)
+        }
+      }, 500) // 500ms debounce delay
+    }, [note.id, note.title, note.content, updateNoteContent])
+
     const handleTitleChange = (title: string) => {
-      updateNoteContent(note.id, title, undefined)
+      setLocalTitle(title)
+      debouncedUpdateContent(title, localContent)
     }
 
     const handleContentChange = (content: string) => {
-      updateNoteContent(note.id, undefined, content)
+      setLocalContent(content)
+      debouncedUpdateContent(localTitle, content)
     }
 
     const handleCloseClick = () => {
@@ -139,12 +166,21 @@ const ResizableStickyNote = React.forwardRef<HTMLDivElement, ResizableStickyNote
       }
     }, [isResizing, handleResizeMove, handleResizeEnd])
 
+    // Cleanup debounce timeout on unmount
+    React.useEffect(() => {
+      return () => {
+        if (debounceTimeoutRef.current) {
+          clearTimeout(debounceTimeoutRef.current)
+        }
+      }
+    }, [])
+
     return (
       <div ref={ref} className={cn("relative group", className)}>
         <StickyNote
           className="sticky-note-content"
-          title={note.title}
-          content={note.content}
+          title={localTitle}
+          content={localContent}
           variant={note.settings.backgroundColor}
           onTitleChange={handleTitleChange}
           onContentChange={handleContentChange}
