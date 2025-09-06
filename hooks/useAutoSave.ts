@@ -1,15 +1,14 @@
 import { useEffect, useRef, useCallback, useState } from 'react'
-import { UpdateStickyNoteInput } from '@/types/stickyNote'
 
 interface UseAutoSaveOptions {
-  onSave: (data: UpdateStickyNoteInput) => Promise<void>
+  onSave: () => Promise<void>
   delay?: number
   enabled?: boolean
 }
 
 export function useAutoSave({ onSave, delay = 5000, enabled = true }: UseAutoSaveOptions) {
   const timeoutRef = useRef<NodeJS.Timeout | null>(null)
-  const pendingChangesRef = useRef<UpdateStickyNoteInput | null>(null)
+  const hasPendingChangesRef = useRef(false)
   const isSavingRef = useRef(false)
   
   // State to trigger re-renders
@@ -28,10 +27,9 @@ export function useAutoSave({ onSave, delay = 5000, enabled = true }: UseAutoSav
 
   // Save function that handles the actual save operation
   const performSave = useCallback(async () => {
-    if (!pendingChangesRef.current || isSavingRef.current) return
+    if (!hasPendingChangesRef.current || isSavingRef.current) return
 
-    const dataToSave = { ...pendingChangesRef.current }
-    pendingChangesRef.current = null
+    hasPendingChangesRef.current = false
     isSavingRef.current = true
     
     // Update state to trigger re-render
@@ -41,32 +39,27 @@ export function useAutoSave({ onSave, delay = 5000, enabled = true }: UseAutoSav
     })
 
     try {
-      await onSave(dataToSave)
+      await onSave()
     } catch (error) {
       console.error('Auto-save failed:', error)
-      // If save fails, restore the pending changes so they can be retried
-      if (!pendingChangesRef.current) {
-        pendingChangesRef.current = dataToSave
-      }
+      // If save fails, mark that we still have pending changes
+      hasPendingChangesRef.current = true
     } finally {
       isSavingRef.current = false
       // Update state to trigger re-render
       setSaveState({
-        hasPendingChanges: !!pendingChangesRef.current,
+        hasPendingChanges: hasPendingChangesRef.current,
         isSaving: false
       })
     }
-  }, [onSave, setSaveState])
+  }, [onSave])
 
-  // Schedule a save with debouncing
-  const scheduleSave = useCallback((data: UpdateStickyNoteInput) => {
+  // Schedule a save with debouncing - simplified to just mark that changes occurred
+  const scheduleSave = useCallback(() => {
     if (!enabled) return
 
-    // Merge with existing pending changes
-    pendingChangesRef.current = {
-      ...pendingChangesRef.current,
-      ...data,
-    }
+    // Mark that we have pending changes
+    hasPendingChangesRef.current = true
     
     // Update state to trigger re-render
     setSaveState({
@@ -79,7 +72,7 @@ export function useAutoSave({ onSave, delay = 5000, enabled = true }: UseAutoSav
     timeoutRef.current = setTimeout(() => {
       performSave()
     }, delay)
-  }, [enabled, delay, clearAutoSaveTimeout, performSave, setSaveState])
+  }, [enabled, delay, clearAutoSaveTimeout, performSave])
 
   // Force immediate save (useful for manual save or before component unmount)
   const forceSave = useCallback(async () => {
