@@ -1,6 +1,5 @@
 import { ImageResponse } from 'next/og'
 
-export const runtime = 'edge'
 export const alt = 'StickyNoter - Digital Sticky Notes & Visual Organization Tool'
 export const size = {
   width: 1200,

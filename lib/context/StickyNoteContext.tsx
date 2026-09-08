@@ -1,13 +1,45 @@
 "use client";
 
-import React, { createContext, useContext, useState, useCallback, useEffect, useMemo, useRef } from "react";
-import { StickyNote, CreateStickyNoteInput, UpdateStickyNoteInput, StickyNoteColor } from "@/types/stickyNote";
+import React, {
+  createContext,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
+import {
+  StickyNote,
+  CreateStickyNoteInput,
+  UpdateStickyNoteInput,
+  StickyNoteColor,
+  StickyNoteUpsertRow,
+} from "@/types/stickyNote";
 import { useAuth } from "@/lib/auth/AuthContext";
 import { createClient } from "@/lib/supabase/client";
-import { mapStickyNoteFromDB, mapStickyNoteToDB, mapStickyNoteUpdateToDB } from "@/lib/utils/stickyNoteMappers";
+import { upsertNotesKeepalive } from "@/lib/supabase/keepaliveUpsert";
+import {
+  mapStickyNoteFromDB,
+  mapStickyNoteToUpsertRow,
+} from "@/lib/utils/stickyNoteMappers";
 import { useAutoSave } from "@/hooks/useAutoSave";
+import { isSupabaseConfigured } from "@/lib/utils";
+import {
+  DEFAULT_STICKY_NOTE_COLOR,
+  NOTE_DEFAULT_HEIGHT,
+  NOTE_DEFAULT_WIDTH,
+  Z_NOTE_MIN,
+  clampNoteHeight,
+  clampNoteWidth,
+} from "@/lib/constants/stickyNotes";
 
-// Context interface
+/** userId stamped on notes created before sign-in. Never reaches the database. */
+const ANONYMOUS_USER_ID = "anonymous";
+
+/** How long an undo of a deletion stays available. */
+const UNDO_WINDOW_MS = 8_000;
+
 interface StickyNoteContextType {
   // State
   notes: StickyNote[];
@@ -22,261 +54,330 @@ interface StickyNoteContextType {
   updateNotePosition: (id: string, x: number, y: number) => Promise<void>;
   updateNoteSize: (id: string, width: number, height: number) => Promise<void>;
   updateNoteContent: (id: string, title?: string, content?: string) => Promise<void>;
+  bringToFront: (id: string) => void;
   loadNotes: () => Promise<void>;
   clearError: () => void;
+
+  // Undo of the most recent deletion
+  lastDeleted: StickyNote | null;
+  undoDelete: () => Promise<void>;
+  dismissUndo: () => void;
 
   // Auto-save status
   hasPendingChanges: boolean;
   isSaving: boolean;
 }
 
-// Create context
 const StickyNoteContext = createContext<StickyNoteContextType | undefined>(undefined);
 
-// Provider component
+type LoadStatus = "loading" | "ready";
+
 export function StickyNoteProvider({ children }: { children: React.ReactNode }) {
-  // Individual useState hooks instead of useReducer
-  const [notes, setNotes] = useState<StickyNote[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [modifiedNoteIds, setModifiedNoteIds] = useState<Set<string>>(new Set());
-  const [lastSaveTime, setLastSaveTime] = useState(0);
+  const { user, session } = useAuth();
+  const userId = user?.id ?? null;
 
-  // Use refs to avoid stale closure issues in auto-save timeout
+  // notesRef is the source of truth; notes mirrors it for rendering. Reading
+  // through the ref means two updates in the same tick compose instead of
+  // clobbering each other, and the saver never sees a stale snapshot.
   const notesRef = useRef<StickyNote[]>([]);
-  const modifiedNoteIdsRef = useRef<Set<string>>(new Set());
+  const [notes, setNotes] = useState<StickyNote[]>([]);
 
-  // Keep refs in sync with state
-  React.useEffect(() => {
-    notesRef.current = notes;
-  }, [notes]);
+  // The dirty set lives in a ref, not state: nothing renders from it (the UI
+  // reads hasPendingChanges from useAutoSave), and a ref has no render-lag
+  // window for an already-armed timer to fall into.
+  const dirtyIdsRef = useRef<Set<string>>(new Set());
 
-  React.useEffect(() => {
-    modifiedNoteIdsRef.current = modifiedNoteIds;
-  }, [modifiedNoteIds]);
+  const [loadStatus, setLoadStatus] = useState<LoadStatus>(
+    isSupabaseConfigured ? "loading" : "ready",
+  );
+  const [dataError, setDataError] = useState<string | null>(null);
+  const [lastDeleted, setLastDeleted] = useState<StickyNote | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const { user } = useAuth();
+  // Guards against an older in-flight load installing its rows over a newer
+  // one, which would show the previous account's notes.
+  const loadGenerationRef = useRef(0);
 
-  // Memoize the Supabase client to prevent recreation on every render
-  const supabase = useMemo(() => createClient(), []);
+  // Null when Supabase is not configured, so the app renders as a local-only
+  // scratchpad instead of throwing during the first commit.
+  const supabase = useMemo(() => (isSupabaseConfigured ? createClient() : null), []);
 
-  // Generate a unique ID for new notes
-  const generateId = () => crypto.randomUUID();
+  /** The single write path for notes. Stable identity; never closes over notes. */
+  const commitNotes = useCallback((updater: (prev: StickyNote[]) => StickyNote[]) => {
+    const next = updater(notesRef.current);
+    notesRef.current = next;
+    setNotes(next);
+  }, []);
 
-  // Batch save function for all modified notes
-  const saveAllModifiedNotes = useCallback(async () => {
-    if (!user || !process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-      return; // Only save if user is authenticated and Supabase is configured
-    }
+  const collectDirtyRows = useCallback(
+    (ownerId: string): { attempted: StickyNote[]; rows: StickyNoteUpsertRow[] } => {
+      const live = new Map(notesRef.current.map((note) => [note.id, note]));
+      const attempted: StickyNote[] = [];
+      const rows: StickyNoteUpsertRow[] = [];
 
-    // Use refs to get current values (avoid stale closure)
-    const currentModifiedNoteIds = modifiedNoteIdsRef.current;
-    const currentNotes = notesRef.current;
-
-    if (currentModifiedNoteIds.size === 0) {
-      return; // No modified notes to save
-    }
-
-    try {
-      // Get all modified notes
-      const modifiedNotes = currentNotes.filter((note) => currentModifiedNoteIds.has(note.id));
-
-      if (modifiedNotes.length === 0) {
-        setModifiedNoteIds(new Set());
-        return;
-      }
-
-      // Save all modified notes to database
-      for (const note of modifiedNotes) {
-        const updateData: UpdateStickyNoteInput = {
-          id: note.id,
-          title: note.title,
-          content: note.content,
-          settings: note.settings,
-          positionX: note.positionX,
-          positionY: note.positionY,
-          width: note.width,
-          height: note.height,
-          zIndex: note.zIndex,
-        };
-
-        const dbUpdate = mapStickyNoteUpdateToDB(updateData);
-        const { error } = await supabase.from("sticky_notes").update(dbUpdate).eq("id", note.id).eq("user_id", user.id);
-
-        if (error) {
-          console.error(`Failed to save note ${note.id}:`, error);
+      for (const id of dirtyIdsRef.current) {
+        const note = live.get(id);
+        if (!note) {
+          // Deleted while dirty. It can never be saved, so stop tracking it.
+          dirtyIdsRef.current.delete(id);
+          continue;
         }
+        attempted.push(note);
+        // Stamp the owner so a note created before sign-in satisfies the RLS
+        // WITH CHECK on insert.
+        rows.push(mapStickyNoteToUpsertRow({ ...note, userId: ownerId }));
       }
 
-      // Clear modified notes and update last save time
-      setModifiedNoteIds(new Set());
-      setLastSaveTime(Date.now());
-    } catch (error) {
-      console.error("Failed to save modified notes:", error);
-      // Don't dispatch error to avoid disrupting UX for database issues
-    }
-  }, [user, supabase]);
-
-  // Auto-save hook
-  const { scheduleSave, forceSave, hasPendingChanges, isSaving } = useAutoSave({
-    onSave: saveAllModifiedNotes,
-    delay: 5000,
-    enabled: !!user, // Only enable auto-save when authenticated
-  });
-
-  // Create a new sticky note
-  const createNote = useCallback(
-    async (input: CreateStickyNoteInput) => {
-      const newNote: StickyNote = {
-        id: generateId(),
-        userId: user?.id || "anonymous",
-        title: input.title || "",
-        content: input.content || "",
-        settings: {
-          backgroundColor: input.settings?.backgroundColor || "yellow",
-        },
-        positionX: input.position_x,
-        positionY: input.position_y,
-        width: input.width || 350,
-        height: input.height || 300,
-        zIndex: input.z_index || 1,
-        createdAt: new Date(),
-        updatedAt: new Date(),
-      };
-
-      // Optimistic create - add to local state immediately for instant UI feedback
-      setNotes((prev) => [...prev, newNote]);
-      setLoading(false);
-      setError(null);
-      setModifiedNoteIds((prev) => new Set([...prev, newNote.id]));
-
-      // Save to Supabase database in the background (if user is authenticated)
-      if (user && process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-        try {
-          const dbNote = mapStickyNoteToDB(newNote);
-          const { error } = await supabase.from("sticky_notes").insert([dbNote]);
-
-          if (error) {
-            console.warn("Failed to save to database:", error);
-            // Could potentially remove the note from state here if needed
-            // But for now, we'll just log the error since the local create already happened
-          }
-        } catch (dbError) {
-          console.warn("Database not configured or failed to save:", dbError);
-          // Local creation already completed, so this is just a background operation
-        }
-      }
+      return { attempted, rows };
     },
-    [user, supabase]
+    [],
   );
 
-  // Update an existing sticky note
+  const persistDirtyNotes = useCallback(async (): Promise<void> => {
+    if (!supabase || !userId) return;
+    if (dirtyIdsRef.current.size === 0) return;
+
+    const { attempted, rows } = collectDirtyRows(userId);
+    if (rows.length === 0) return;
+
+    // The select is load-bearing, not decoration. A PostgREST write that
+    // matches zero rows returns 2xx with no error, so reading back the ids that
+    // were actually written is the only way to tell "saved" from "silently
+    // discarded".
+    const { data, error } = await supabase
+      .from("sticky_notes")
+      .upsert(rows, { onConflict: "id" })
+      .select("id");
+
+    if (error) {
+      // Leave every attempted id dirty and reject, so useAutoSave retries with
+      // backoff and the status chip tells the truth. Never mark a failed note
+      // clean.
+      throw new Error(`Failed to save ${rows.length} note(s): ${error.message}`);
+    }
+
+    const returned: { id: string }[] = data ?? [];
+    const savedIds = new Set(returned.map((row) => row.id));
+    const live = new Map(notesRef.current.map((note) => [note.id, note]));
+
+    // Set difference against what the database actually confirmed, gated on the
+    // note still being object-identical to what we sent. commitNotes always
+    // allocates a fresh note object on edit, so object identity is the version
+    // token: an edit that landed during the round trip stays dirty.
+    for (const note of attempted) {
+      if (!savedIds.has(note.id)) continue;
+      if (live.get(note.id) === note) dirtyIdsRef.current.delete(note.id);
+    }
+
+    // A note deleted while this upsert was in flight has just been resurrected
+    // server-side. Re-delete it rather than leaving a zombie until next reload.
+    const resurrected = attempted
+      .filter((note) => savedIds.has(note.id) && !live.has(note.id))
+      .map((note) => note.id);
+    if (resurrected.length > 0) {
+      await supabase
+        .from("sticky_notes")
+        .delete()
+        .in("id", resurrected)
+        .eq("user_id", userId);
+    }
+
+    const unwritten = attempted.filter((note) => !savedIds.has(note.id));
+    if (unwritten.length > 0) {
+      // 2xx but fewer rows written than sent means a row level security policy
+      // filtered them. This is the silent-zero-rows failure mode that used to
+      // make lost notes undiagnosable, so make it loud.
+      throw new Error(
+        `Supabase accepted the request but only wrote ${savedIds.size}/${rows.length} rows. ` +
+          `Unwritten: ${unwritten.map((note) => note.id).join(", ")}. ` +
+          `Check row level security policies on sticky_notes.`,
+      );
+    }
+  }, [supabase, userId, collectDirtyRows]);
+
+  const {
+    scheduleSave,
+    flush,
+    hasPendingChangesNow,
+    hasPendingChanges,
+    isSaving,
+    saveError,
+  } = useAutoSave({
+    onSave: persistDirtyNotes,
+    delay: 1_500,
+    maxWait: 5_000,
+    enabled: Boolean(userId) && isSupabaseConfigured,
+  });
+
+  const markDirty = useCallback(
+    (id: string) => {
+      if (!userId) return;
+      dirtyIdsRef.current.add(id);
+      scheduleSave();
+    },
+    [userId, scheduleSave],
+  );
+
+  const nextZIndex = useCallback((): number => {
+    return notesRef.current.reduce(
+      (max, note) => Math.max(max, note.zIndex + 1),
+      Z_NOTE_MIN,
+    );
+  }, []);
+
+  const createNote = useCallback(
+    async (input: CreateStickyNoteInput): Promise<void> => {
+      const now = new Date();
+      const newNote: StickyNote = {
+        id: crypto.randomUUID(),
+        userId: userId ?? ANONYMOUS_USER_ID,
+        title: input.title ?? "",
+        content: input.content ?? "",
+        settings: {
+          backgroundColor: input.settings?.backgroundColor ?? DEFAULT_STICKY_NOTE_COLOR,
+        },
+        positionX: input.positionX,
+        positionY: input.positionY,
+        width: clampNoteWidth(input.width ?? NOTE_DEFAULT_WIDTH),
+        height: clampNoteHeight(input.height ?? NOTE_DEFAULT_HEIGHT),
+        zIndex: input.zIndex ?? nextZIndex(),
+        createdAt: now,
+        updatedAt: now,
+      };
+
+      // Optimistic create. No load-status write here: that is owned solely by
+      // loadNotes, and touching it from a mutation used to cancel an in-flight
+      // load's spinner.
+      commitNotes((prev) => [...prev, newNote]);
+
+      if (!userId) return; // anonymous: local only, adopted on sign-in
+
+      // There is deliberately no dedicated INSERT. Creates and updates travel
+      // the same upsert path, so a create can no longer fail while every later
+      // update silently no-ops against a row that does not exist.
+      dirtyIdsRef.current.add(newNote.id);
+      scheduleSave();
+      await flush();
+    },
+    [userId, commitNotes, nextZIndex, scheduleSave, flush],
+  );
+
   const updateNote = useCallback(
-    async (input: UpdateStickyNoteInput) => {
-      const existingNote = notes.find((note) => note.id === input.id);
-      if (!existingNote) {
+    async (input: UpdateStickyNoteInput): Promise<void> => {
+      let found = false;
+
+      // The new value is derived inside the updater, from the freshest base, so
+      // two updates in the same tick compose rather than clobber.
+      commitNotes((prev) =>
+        prev.map((note) => {
+          if (note.id !== input.id) return note;
+          found = true;
+          return {
+            ...note,
+            title: input.title ?? note.title,
+            content: input.content ?? note.content,
+            settings: { ...note.settings, ...input.settings },
+            positionX: input.positionX ?? note.positionX,
+            positionY: input.positionY ?? note.positionY,
+            width: input.width ?? note.width,
+            height: input.height ?? note.height,
+            zIndex: input.zIndex ?? note.zIndex,
+            updatedAt: new Date(),
+          };
+        }),
+      );
+
+      if (!found) {
         console.error("Note not found for update:", input.id);
         return;
       }
 
-      const updatedNote: StickyNote = {
-        ...existingNote,
-        title: input.title ?? existingNote.title,
-        content: input.content ?? existingNote.content,
-        settings: {
-          ...existingNote.settings,
-          ...input.settings,
-        },
-        positionX: input.positionX ?? existingNote.positionX,
-        positionY: input.positionY ?? existingNote.positionY,
-        width: input.width ?? existingNote.width,
-        height: input.height ?? existingNote.height,
-        zIndex: input.zIndex ?? existingNote.zIndex,
-        updatedAt: new Date(),
-      };
-
-      // Optimistic update - update local state immediately for instant UI feedback
-      setNotes((prev) => prev.map((note) => (note.id === input.id ? updatedNote : note)));
-      setLoading(false);
-      setError(null);
-      setModifiedNoteIds((prev) => new Set([...prev, input.id]));
-
-      // Schedule auto-save if user is authenticated
-      if (user) {
-        scheduleSave(); // Just notify that changes occurred
-      }
+      markDirty(input.id);
     },
-    [user, notes, scheduleSave]
+    [commitNotes, markDirty],
   );
 
-  // Delete a sticky note
   const deleteNote = useCallback(
-    async (id: string) => {
-      // Optimistic delete - remove from local state immediately for instant UI feedback
-      setNotes((prev) => prev.filter((note) => note.id !== id));
-      setLoading(false);
-      setError(null);
-      setModifiedNoteIds((prev) => {
-        const newSet = new Set(prev);
-        newSet.delete(id);
-        return newSet;
-      });
+    async (id: string): Promise<void> => {
+      const removed = notesRef.current.find((note) => note.id === id) ?? null;
 
-      // Handle database deletion in the background (if user is authenticated)
-      if (user && process.env.NEXT_PUBLIC_SUPABASE_URL && process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-        try {
-          const { error } = await supabase.from("sticky_notes").delete().eq("id", id).eq("user_id", user.id);
+      commitNotes((prev) => prev.filter((note) => note.id !== id));
+      dirtyIdsRef.current.delete(id);
 
-          if (error) {
-            console.warn("Failed to delete from database:", error);
-            // Could potentially add the note back to state here if needed
-            // But for now, we'll just log the error since the local delete already happened
-          }
-        } catch (dbError) {
-          console.warn("Database not configured or failed to delete:", dbError);
-          // Local deletion already completed, so this is just a background operation
-        }
+      if (removed) {
+        setLastDeleted(removed);
+        if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+        undoTimerRef.current = setTimeout(() => setLastDeleted(null), UNDO_WINDOW_MS);
+      }
+
+      if (!supabase || !userId) return;
+
+      const { error } = await supabase
+        .from("sticky_notes")
+        .delete()
+        .eq("id", id)
+        .eq("user_id", userId);
+
+      if (error) {
+        // The note is gone from the UI but survives in the database, so it will
+        // reappear on the next load. Say so rather than logging into the void.
+        console.error("Failed to delete note:", error);
+        setDataError(`Could not delete that note: ${error.message}`);
       }
     },
-    [user, supabase]
+    [commitNotes, supabase, userId],
   );
 
-  // Convenience function to update note color
+  const undoDelete = useCallback(async (): Promise<void> => {
+    const note = lastDeleted;
+    if (!note) return;
+
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setLastDeleted(null);
+
+    const restored: StickyNote = { ...note, updatedAt: new Date() };
+    commitNotes((prev) =>
+      prev.some((existing) => existing.id === restored.id) ? prev : [...prev, restored],
+    );
+
+    if (!userId) return;
+    dirtyIdsRef.current.add(restored.id);
+    scheduleSave();
+    await flush();
+  }, [lastDeleted, commitNotes, userId, scheduleSave, flush]);
+
+  const dismissUndo = useCallback(() => {
+    if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    setLastDeleted(null);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+    };
+  }, []);
+
   const updateNoteColor = useCallback(
     async (id: string, color: StickyNoteColor) => {
-      await updateNote({
-        id,
-        settings: { backgroundColor: color },
-      });
+      await updateNote({ id, settings: { backgroundColor: color } });
     },
-    [updateNote]
+    [updateNote],
   );
 
-  // Convenience function to update note position
   const updateNotePosition = useCallback(
     async (id: string, x: number, y: number) => {
-      await updateNote({
-        id,
-        positionX: x,
-        positionY: y,
-      });
+      await updateNote({ id, positionX: x, positionY: y });
     },
-    [updateNote]
+    [updateNote],
   );
 
-  // Convenience function to update note size
   const updateNoteSize = useCallback(
     async (id: string, width: number, height: number) => {
-      await updateNote({
-        id,
-        width,
-        height,
-      });
+      await updateNote({ id, width, height });
     },
-    [updateNote]
+    [updateNote],
   );
 
-  // Convenience function to update note content
   const updateNoteContent = useCallback(
     async (id: string, title?: string, content?: string) => {
       await updateNote({
@@ -285,108 +386,199 @@ export function StickyNoteProvider({ children }: { children: React.ReactNode }) 
         ...(content !== undefined && { content }),
       });
     },
-    [updateNote]
+    [updateNote],
   );
 
-  // Load notes from database
-  const loadNotes = useCallback(async () => {
-    if (!user || !process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-      setNotes([]);
-      setLoading(false);
+  /** Raise a note above its siblings. No-op when it is already alone on top. */
+  const bringToFront = useCallback(
+    (id: string) => {
+      const current = notesRef.current;
+      const note = current.find((candidate) => candidate.id === id);
+      if (!note) return;
+
+      const highest = current.reduce(
+        (max, candidate) => Math.max(max, candidate.zIndex),
+        Z_NOTE_MIN,
+      );
+      const alreadyOnTop =
+        note.zIndex === highest &&
+        current.every((candidate) => candidate.id === id || candidate.zIndex < highest);
+      if (alreadyOnTop) return;
+
+      const target = highest + 1;
+      commitNotes((prev) =>
+        prev.map((candidate) =>
+          candidate.id === id
+            ? { ...candidate, zIndex: target, updatedAt: new Date() }
+            : candidate,
+        ),
+      );
+      markDirty(id);
+    },
+    [commitNotes, markDirty],
+  );
+
+  const loadNotes = useCallback(async (): Promise<void> => {
+    const generation = ++loadGenerationRef.current;
+    const isCurrent = () => loadGenerationRef.current === generation;
+
+    if (!supabase || !userId) {
+      // Signed out, or Supabase not configured. Clearing is deliberate: after a
+      // sign-out the notes on screen belong to the previous account.
+      commitNotes(() => []);
+      dirtyIdsRef.current.clear();
+      if (isCurrent()) setLoadStatus("ready");
       return;
     }
 
-    try {
-      setLoading(true);
+    setLoadStatus("loading");
+    setDataError(null);
 
-      // Load from Supabase database
-      const { data, error } = await supabase.from("sticky_notes").select("*").eq("user_id", user.id).order("created_at", { ascending: false });
+    const { data, error } = await supabase
+      .from("sticky_notes")
+      .select("*")
+      .eq("user_id", userId)
+      .order("created_at", { ascending: true });
 
-      if (error) throw error;
+    // A newer load, or a sign-out, superseded us. Installing these rows now
+    // would show the wrong account's notes.
+    if (!isCurrent()) return;
 
-      // Convert database format to client format
-      const loadedNotes = data ? data.map(mapStickyNoteFromDB) : [];
-      setNotes(loadedNotes);
-      setLoading(false);
-      setError(null);
-      setModifiedNoteIds(new Set()); // Clear modified notes when loading fresh data
-    } catch (error) {
-      console.warn("Failed to load notes from database:", error);
-      // Set empty array on error instead of showing error to user
-      setNotes([]);
-      setLoading(false);
+    if (error) {
+      // Deliberately does NOT clear the notes. Wiping them on a transient
+      // network error made the user's work look deleted, showed the "create
+      // your first note" empty state, and let autosave treat the blank canvas
+      // as the truth.
+      console.error("Failed to load notes:", error);
+      setDataError(
+        `Could not load your notes: ${error.message}. Nothing has been overwritten.`,
+      );
+      setLoadStatus("ready");
+      return;
     }
-  }, [user, supabase]);
 
-  // Clear error
-  const clearError = useCallback(() => {
-    setError(null);
-  }, []);
+    const loaded: StickyNote[] = (data ?? []).map(mapStickyNoteFromDB);
 
-  // Load notes when user changes
+    // Adopt anything created before sign-in rather than discarding it.
+    const adopted = notesRef.current
+      .filter((note) => note.userId === ANONYMOUS_USER_ID)
+      .map((note) => ({ ...note, userId }));
+
+    dirtyIdsRef.current.clear();
+    commitNotes(() => [...loaded, ...adopted]);
+
+    if (adopted.length > 0) {
+      adopted.forEach((note) => dirtyIdsRef.current.add(note.id));
+      scheduleSave();
+    }
+
+    setLoadStatus("ready");
+  }, [supabase, userId, commitNotes, scheduleSave]);
+
+  // The only unstable dependency of loadNotes is the primitive userId, so a
+  // TOKEN_REFRESHED event (which hands out a new User object carrying the same
+  // id) no longer triggers a reload that discards unsaved edits.
   useEffect(() => {
-    const loadNotesForUser = async () => {
-      if (!user || !process.env.NEXT_PUBLIC_SUPABASE_URL || !process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY) {
-        setNotes([]);
-        setLoading(false);
-        return;
-      }
+    void loadNotes();
+  }, [loadNotes]);
 
-      try {
-        setLoading(true);
+  const accessTokenRef = useRef<string | null>(null);
+  useEffect(() => {
+    accessTokenRef.current = session?.access_token ?? null;
+  }, [session]);
 
-        // Load from Supabase database
-        const { data, error } = await supabase.from("sticky_notes").select("*").eq("user_id", user.id).order("created_at", { ascending: false });
+  // Flush pending work when the page is hidden or unloaded. visibilitychange
+  // fires earlier and far more reliably than beforeunload, especially on
+  // mobile, and pagehide covers back/forward cache and app switching.
+  useEffect(() => {
+    if (!userId || !isSupabaseConfigured) return;
 
-        if (error) throw error;
-
-        // Convert database format to client format
-        const loadedNotes = data ? data.map(mapStickyNoteFromDB) : [];
-        setNotes(loadedNotes);
-        setLoading(false);
-        setError(null);
-        setModifiedNoteIds(new Set()); // Clear modified notes when loading fresh data
-      } catch (error) {
-        console.warn("Failed to load notes from database:", error);
-        // Set empty array on error instead of showing error to user
-        setNotes([]);
-        setLoading(false);
-      }
+    const flushOnHide = () => {
+      if (dirtyIdsRef.current.size === 0 && !hasPendingChangesNow()) return;
+      const token = accessTokenRef.current;
+      if (!token) return;
+      const { rows } = collectDirtyRows(userId);
+      if (rows.length === 0) return;
+      upsertNotesKeepalive(rows, token);
+      // Deliberately does not clear the dirty set: the response is
+      // unobservable. If the page survives (a tab switch), the normal save path
+      // writes the same rows again, and the upsert is idempotent.
     };
 
-    loadNotesForUser();
-  }, [user, supabase]); // Depend on user and the memoized supabase client
+    const onVisibilityChange = () => {
+      if (document.visibilityState === "hidden") flushOnHide();
+    };
 
-  // Force save pending changes when user changes or component unmounts
-  useEffect(() => {
+    document.addEventListener("visibilitychange", onVisibilityChange);
+    window.addEventListener("pagehide", flushOnHide);
+
     return () => {
-      if (hasPendingChanges && user) {
-        forceSave();
-      }
+      document.removeEventListener("visibilitychange", onVisibilityChange);
+      window.removeEventListener("pagehide", flushOnHide);
+      flushOnHide(); // provider teardown or sign-out: last chance
     };
-  }, [forceSave, hasPendingChanges, user]);
+  }, [userId, collectDirtyRows, hasPendingChangesNow]);
 
-  const contextValue: StickyNoteContextType = {
-    notes,
-    loading,
-    error,
-    createNote,
-    updateNote,
-    deleteNote,
-    updateNoteColor,
-    updateNotePosition,
-    updateNoteSize,
-    updateNoteContent,
-    loadNotes,
-    clearError,
-    hasPendingChanges,
-    isSaving,
-  };
+  const clearError = useCallback(() => setDataError(null), []);
 
-  return <StickyNoteContext.Provider value={contextValue}>{children}</StickyNoteContext.Provider>;
+  const error = useMemo(() => {
+    if (dataError) return dataError;
+    if (saveError) return `Could not save your changes: ${saveError.message}`;
+    return null;
+  }, [dataError, saveError]);
+
+  const loading = loadStatus === "loading";
+
+  const contextValue = useMemo<StickyNoteContextType>(
+    () => ({
+      notes,
+      loading,
+      error,
+      createNote,
+      updateNote,
+      deleteNote,
+      updateNoteColor,
+      updateNotePosition,
+      updateNoteSize,
+      updateNoteContent,
+      bringToFront,
+      loadNotes,
+      clearError,
+      lastDeleted,
+      undoDelete,
+      dismissUndo,
+      hasPendingChanges,
+      isSaving,
+    }),
+    [
+      notes,
+      loading,
+      error,
+      createNote,
+      updateNote,
+      deleteNote,
+      updateNoteColor,
+      updateNotePosition,
+      updateNoteSize,
+      updateNoteContent,
+      bringToFront,
+      loadNotes,
+      clearError,
+      lastDeleted,
+      undoDelete,
+      dismissUndo,
+      hasPendingChanges,
+      isSaving,
+    ],
+  );
+
+  return (
+    <StickyNoteContext.Provider value={contextValue}>
+      {children}
+    </StickyNoteContext.Provider>
+  );
 }
 
-// Hook to use the context
 export function useStickyNotes() {
   const context = useContext(StickyNoteContext);
   if (context === undefined) {

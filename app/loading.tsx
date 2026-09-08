@@ -1,6 +1,6 @@
 export default function Loading() {
   return (
-    <div className="w-full h-full bg-red-950/90 overflow-hidden">
+    <div className="relative w-full h-full bg-red-950/90 overflow-hidden">
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
         <div className="text-center">
           {/* Logo/Title */}

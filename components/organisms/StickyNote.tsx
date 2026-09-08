@@ -1,17 +1,29 @@
+'use client'
+
 import * as React from "react"
 import { cn } from "@/lib/utils"
 import { StickyNoteHeader } from "@/components/molecules/StickyNoteHeader"
+import { ColorPicker } from "@/components/molecules/ColorPicker"
 import { Textarea } from "@/components/atoms/TextArea"
-import { StickyNoteColor } from "@/types/stickyNote"
+import {
+  DEFAULT_STICKY_NOTE_COLOR,
+  NOTE_DEFAULT_HEIGHT,
+  NOTE_DEFAULT_WIDTH,
+  STICKY_NOTE_VARIANTS,
+} from "@/lib/constants/stickyNotes"
+import type { StickyNoteColor } from "@/types/stickyNote"
 
 interface StickyNoteProps extends React.HTMLAttributes<HTMLDivElement> {
+  noteId: string
   title?: string
   content?: string
   onTitleChange?: (value: string) => void
   onContentChange?: (value: string) => void
   onSettingsClick?: () => void
-  onCloseClick?: () => void
+  onDeleteClick?: () => void
   onColorChange?: (color: StickyNoteColor) => void
+  onColorPickerClose?: () => void
+  settingsButtonRef?: React.Ref<HTMLButtonElement>
   titlePlaceholder?: string
   contentPlaceholder?: string
   disabled?: boolean
@@ -21,97 +33,97 @@ interface StickyNoteProps extends React.HTMLAttributes<HTMLDivElement> {
   showSettings?: boolean
 }
 
-const stickyNoteVariants = {
-  yellow: "bg-yellow-300 border-yellow-500 shadow-yellow-500/20",
-  orange: "bg-orange-300 border-orange-500 shadow-orange-500/20",
-  blue: "bg-blue-300 border-blue-500 shadow-blue-500/20",
-  green: "bg-green-300 border-green-500 shadow-green-500/20",
-  pink: "bg-pink-300 border-pink-500 shadow-pink-500/20",
-  purple: "bg-purple-300 border-purple-500 shadow-purple-500/20",
-  red: "bg-red-300 border-red-500 shadow-red-500/20",
-  teal: "bg-teal-300 border-teal-500 shadow-teal-500/20",
-  gray: "bg-gray-300 border-gray-500 shadow-gray-500/20",
-}
-
 const StickyNote = React.forwardRef<HTMLDivElement, StickyNoteProps>(
-  ({
-    className,
-    title,
-    content,
-    onTitleChange,
-    onContentChange,
-    onSettingsClick,
-    onCloseClick,
-    onColorChange,
-    titlePlaceholder = "New Note",
-    contentPlaceholder = "Click here to edit...",
-    disabled = false,
-    variant = "yellow",
-    width = 300,
-    height = 200,
-    showSettings = false,
-    ...props
-  }, ref) => {
-    const variantClass = stickyNoteVariants[variant] || stickyNoteVariants.yellow
+  (
+    {
+      className,
+      noteId,
+      title,
+      content,
+      onTitleChange,
+      onContentChange,
+      onSettingsClick,
+      onDeleteClick,
+      onColorChange,
+      onColorPickerClose,
+      settingsButtonRef,
+      titlePlaceholder = "New Note",
+      contentPlaceholder = "Click here to edit...",
+      disabled = false,
+      variant = DEFAULT_STICKY_NOTE_COLOR,
+      width = NOTE_DEFAULT_WIDTH,
+      height = NOTE_DEFAULT_HEIGHT,
+      showSettings = false,
+      ...props
+    },
+    ref,
+  ) => {
+    const variantClass = STICKY_NOTE_VARIANTS[variant] ?? STICKY_NOTE_VARIANTS.yellow
+    const bodyId = `note-body-${noteId}`
+    const colorPickerId = `note-colors-${noteId}`
 
     return (
-      <div
-        ref={ref}
-        className={cn(
-          "relative border-2 rounded-lg shadow-lg",
-          "flex flex-col",
-          variantClass,
-          className
-        )}
-        style={{ width: `${width}px`, height: `${height}px` }}
+      <article
+        // Spread first so a caller-supplied style cannot clobber the dimensions
+        // below, which is what happened when style came first.
         {...props}
+        ref={ref}
+        aria-label={title ? `Note: ${title}` : "Untitled note"}
+        className={cn(
+          "relative flex flex-col overflow-hidden rounded-lg border-2 shadow-lg",
+          variantClass,
+          className,
+        )}
+        style={{
+          // The resize gesture writes --resize-dw / --resize-dh, which React
+          // never declares, so a mid-gesture re-render cannot undo it.
+          width: `calc(${width}px + var(--resize-dw, 0px))`,
+          height: `calc(${height}px + var(--resize-dh, 0px))`,
+        }}
       >
-        {/* Header */}
         <StickyNoteHeader
+          noteId={noteId}
           title={title}
           onTitleChange={onTitleChange}
           onSettingsClick={onSettingsClick}
-          onCloseClick={onCloseClick}
+          onDeleteClick={onDeleteClick}
+          settingsButtonRef={settingsButtonRef}
+          settingsOpen={showSettings}
+          colorPickerId={onColorChange ? colorPickerId : undefined}
           titlePlaceholder={titlePlaceholder}
           disabled={disabled}
         />
 
-        {/* Content Area */}
-        <div className="flex-1 p-3 relative">
-          {/* Show settings overlay when settings is active */}
-          {showSettings && onColorChange ? (
-            <div className="absolute inset-0 flex items-center justify-center bg-white/95 backdrop-blur-sm rounded-b-lg">
-              <div className="text-center">
-                <h3 className="text-sm font-medium text-gray-800 mb-3">Choose Color</h3>
-                <div className="grid grid-cols-3 gap-2">
-                  {Object.entries(stickyNoteVariants).map(([color]) => (
-                    <button
-                      key={color}
-                      onClick={() => onColorChange(color as StickyNoteColor)}
-                      className={cn(
-                        "w-8 h-8 rounded-full border-2 hover:scale-110 transition-transform cursor-pointer",
-                        stickyNoteVariants[color as StickyNoteColor],
-                        variant === color ? "ring-2 ring-gray-600 ring-offset-1" : "border-gray-300"
-                      )}
-                      aria-label={`Select ${color} color`}
-                    />
-                  ))}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <Textarea
-              value={content}
-              onChange={(e) => onContentChange?.(e.target.value)}
-              placeholder={contentPlaceholder}
-              disabled={disabled}
-              className="w-full h-full resize-none !border-0 !border-none bg-transparent text-gray-800 placeholder-gray-500 focus:outline-none !focus-visible:ring-0 !focus-visible:border-0 !ring-0 !shadow-none text-sm p-0"
-            />
-          )}
+        <div className="min-h-0 flex-1 p-3">
+          <label htmlFor={bodyId} className="sr-only">
+            Note contents
+          </label>
+          <Textarea
+            id={bodyId}
+            seamless
+            value={content ?? ""}
+            onChange={(event) => onContentChange?.(event.target.value)}
+            placeholder={contentPlaceholder}
+            disabled={disabled}
+            data-no-drag
+            className="h-full w-full resize-none text-sm text-stone-800"
+          />
         </div>
-      </div>
+
+        {/* Covers the whole note, including the header, so nothing underneath
+            stays clickable while the picker is open. */}
+        {showSettings && onColorChange ? (
+          <ColorPicker
+            id={colorPickerId}
+            className="absolute inset-0 z-10 rounded-lg"
+            selectedColor={variant}
+            onColorSelect={onColorChange}
+            onClose={onColorPickerClose}
+          />
+        ) : null}
+      </article>
     )
-  }
+  },
 )
 
 StickyNote.displayName = "StickyNote"

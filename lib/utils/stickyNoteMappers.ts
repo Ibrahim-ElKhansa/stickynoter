@@ -1,66 +1,70 @@
-import { StickyNote, StickyNoteDB, UpdateStickyNoteInput } from '@/types/stickyNote'
+import { DEFAULT_STICKY_NOTE_COLOR, isStickyNoteColor } from '@/lib/constants/stickyNotes'
+import type {
+  StickyNote,
+  StickyNoteColor,
+  StickyNoteDB,
+  StickyNoteUpsertRow,
+} from '@/types/stickyNote'
 
 /**
- * Converts a StickyNoteDB (database format) to StickyNote (client format)
+ * `settings` is a jsonb column, so the row shape is a claim rather than a
+ * guarantee. Narrow it instead of trusting the declared type.
+ */
+function toStickyNoteColor(value: unknown): StickyNoteColor {
+  return isStickyNoteColor(value) ? value : DEFAULT_STICKY_NOTE_COLOR
+}
+
+function toDate(value: string | null | undefined): Date {
+  const parsed = value ? new Date(value) : new Date()
+  return Number.isNaN(parsed.getTime()) ? new Date() : parsed
+}
+
+function toFiniteNumber(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback
+}
+
+/**
+ * Converts a StickyNoteDB (database format) to StickyNote (client format).
  */
 export function mapStickyNoteFromDB(dbNote: StickyNoteDB): StickyNote {
   return {
     id: dbNote.id,
     userId: dbNote.user_id,
-    title: dbNote.title,
-    content: dbNote.content,
-    settings: dbNote.settings,
-    positionX: dbNote.position_x,
-    positionY: dbNote.position_y,
-    width: dbNote.width,
-    height: dbNote.height,
-    zIndex: dbNote.z_index,
-    createdAt: new Date(dbNote.created_at),
-    updatedAt: new Date(dbNote.updated_at),
+    title: dbNote.title ?? '',
+    content: dbNote.content ?? '',
+    settings: {
+      backgroundColor: toStickyNoteColor(dbNote.settings?.backgroundColor),
+    },
+    positionX: toFiniteNumber(dbNote.position_x, 0),
+    positionY: toFiniteNumber(dbNote.position_y, 0),
+    width: toFiniteNumber(dbNote.width, 300),
+    height: toFiniteNumber(dbNote.height, 200),
+    zIndex: toFiniteNumber(dbNote.z_index, 1),
+    createdAt: toDate(dbNote.created_at),
+    updatedAt: toDate(dbNote.updated_at),
   }
 }
 
 /**
- * Converts a StickyNote (client format) to StickyNoteDB (database format)
+ * Converts a StickyNote to the row we upsert.
+ *
+ * Both creates and updates travel this single path. There is deliberately no
+ * partial-update mapper: a partial UPDATE that matches zero rows returns 2xx
+ * with no error from PostgREST, which is what made a failed insert followed by
+ * a lifetime of silent no-op updates undetectable.
  */
-export function mapStickyNoteToDB(note: StickyNote): StickyNoteDB {
+export function mapStickyNoteToUpsertRow(note: StickyNote): StickyNoteUpsertRow {
   return {
     id: note.id,
     user_id: note.userId,
     title: note.title,
     content: note.content,
-    settings: note.settings,
+    settings: { backgroundColor: toStickyNoteColor(note.settings?.backgroundColor) },
     position_x: Math.round(note.positionX),
     position_y: Math.round(note.positionY),
     width: Math.round(note.width),
     height: Math.round(note.height),
-    z_index: note.zIndex,
-    created_at: note.createdAt.toISOString(),
-    updated_at: note.updatedAt.toISOString(),
+    z_index: Math.round(note.zIndex),
+    updated_at: new Date().toISOString(),
   }
-}
-
-/**
- * Converts partial StickyNote updates to database format
- */
-export function mapStickyNoteUpdateToDB(
-  update: UpdateStickyNoteInput
-): Partial<Omit<StickyNoteDB, 'id' | 'user_id' | 'created_at' | 'updated_at'>> {
-  const dbUpdate: Partial<Omit<StickyNoteDB, 'id' | 'user_id' | 'created_at' | 'updated_at'>> = {}
-  
-  if (update.title !== undefined) dbUpdate.title = update.title
-  if (update.content !== undefined) dbUpdate.content = update.content
-  if (update.settings !== undefined) {
-    // Ensure settings has backgroundColor if it's being updated
-    dbUpdate.settings = {
-      backgroundColor: update.settings.backgroundColor || 'default'
-    }
-  }
-  if (update.positionX !== undefined) dbUpdate.position_x = Math.round(update.positionX)
-  if (update.positionY !== undefined) dbUpdate.position_y = Math.round(update.positionY)
-  if (update.width !== undefined) dbUpdate.width = Math.round(update.width)
-  if (update.height !== undefined) dbUpdate.height = Math.round(update.height)
-  if (update.zIndex !== undefined) dbUpdate.z_index = update.zIndex
-  
-  return dbUpdate
 }

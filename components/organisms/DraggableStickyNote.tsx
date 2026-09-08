@@ -1,9 +1,13 @@
-import * as React from "react"
-import { cn } from "@/lib/utils"
-import { StickyNote as StickyNoteType } from "@/types/stickyNote"
-import { ResizableStickyNote } from "@/components/organisms/ResizableStickyNote"
-import { useStickyNotes } from "@/lib/context/StickyNoteContext"
-import { usePanCanvas } from "@/hooks/usePanCanvas"
+'use client'
+
+import * as React from 'react'
+import { cn } from '@/lib/utils'
+import { StickyNote as StickyNoteType } from '@/types/stickyNote'
+import { ResizableStickyNote } from '@/components/organisms/ResizableStickyNote'
+import { useStickyNotes } from '@/lib/context/StickyNoteContext'
+import { useCanvasTransformApi } from '@/lib/context/CanvasTransformContext'
+import { usePointerGesture, type GestureDelta } from '@/hooks/usePointerGesture'
+import { Z_NOTE_ACTIVE } from '@/lib/constants/stickyNotes'
 
 interface DraggableStickyNoteProps {
   note: StickyNoteType
@@ -12,122 +16,127 @@ interface DraggableStickyNoteProps {
 
 const DraggableStickyNote = React.forwardRef<HTMLDivElement, DraggableStickyNoteProps>(
   ({ note, className }, ref) => {
-    const { updateNotePosition } = useStickyNotes()
-    const { transform } = usePanCanvas()
-    const [isDragging, setIsDragging] = React.useState(false)
-    const [dragOffset, setDragOffset] = React.useState({ x: 0, y: 0 })
+    const { updateNotePosition, bringToFront } = useStickyNotes()
+    const { getTransform } = useCanvasTransformApi()
 
-    const handleMouseDown = (e: React.MouseEvent) => {
-      // Only allow dragging from the header area (not from textarea/input)
-      const target = e.target as HTMLElement
-      if (target.tagName === 'TEXTAREA' || target.tagName === 'INPUT' || target.closest('textarea') || target.closest('input')) {
-        return
+    const wrapperRef = React.useRef<HTMLDivElement | null>(null)
+    const liveOffsetRef = React.useRef({ x: 0, y: 0 })
+
+    /**
+     * Live drag feedback goes through a CSS custom property React never
+     * declares, while React keeps sole ownership of left and top. React's style
+     * diffing only removes keys it previously wrote, so a re-render mid-drag is
+     * structurally incapable of snapping the note back to where it started.
+     * The previous code wrote style.left/top directly, which React reasserted
+     * on every unrelated re-render.
+     */
+    const applyOffset = React.useCallback((x: number, y: number) => {
+      liveOffsetRef.current = { x, y }
+      const element = wrapperRef.current
+      if (!element) return
+      element.style.setProperty('--drag-x', `${x}px`)
+      element.style.setProperty('--drag-y', `${y}px`)
+    }, [])
+
+    // Once React's declared left/top catches up, zero the visual offset. A
+    // layout effect runs in the same frame as the commit, so there is no flash.
+    React.useLayoutEffect(() => {
+      if (liveOffsetRef.current.x !== 0 || liveOffsetRef.current.y !== 0) {
+        applyOffset(0, 0)
       }
-      
-      setIsDragging(true)
-      
-      // Calculate offset in canvas coordinates (scaled)
-      const rect = e.currentTarget.getBoundingClientRect()
-      const offsetX = (e.clientX - rect.left) / transform.scale
-      const offsetY = (e.clientY - rect.top) / transform.scale
-      
-      setDragOffset({
-        x: offsetX,
-        y: offsetY
-      })
-      e.preventDefault()
-    }
+    }, [note.positionX, note.positionY, applyOffset])
 
-    const handleMouseMove = React.useCallback((e: MouseEvent) => {
-      if (!isDragging) return
+    const shouldStartDrag = React.useCallback((event: React.PointerEvent) => {
+      // Inputs, buttons, the colour picker and the resize handles opt out via
+      // data-no-drag. Previously only INPUT and TEXTAREA were excluded, so the
+      // settings and delete buttons both started a drag.
+      const target = event.target as HTMLElement
+      return target.closest('[data-no-drag]') === null
+    }, [])
 
-      // Get the viewport canvas container (not the transformed one)
-      const viewportContainer = document.querySelector('.relative.w-full.h-full.overflow-hidden') as HTMLElement
-      if (!viewportContainer) return
+    const handleStart = React.useCallback(() => {
+      bringToFront(note.id)
+    }, [bringToFront, note.id])
 
-      const containerRect = viewportContainer.getBoundingClientRect()
-      
-      // Calculate position relative to viewport, then convert to canvas coordinates
-      const viewportX = e.clientX - containerRect.left
-      const viewportY = e.clientY - containerRect.top
-      
-      // Convert viewport coordinates to canvas coordinates accounting for transform and scale
-      const canvasX = (viewportX - transform.x) / transform.scale - dragOffset.x
-      const canvasY = (viewportY - transform.y) / transform.scale - dragOffset.y
+    const handleMove = React.useCallback(
+      (delta: GestureDelta) => {
+        // Screen pixels to canvas pixels. Without dividing by the scale the
+        // note drifts away from the cursor at any zoom other than 1.
+        const { scale } = getTransform()
+        applyOffset(delta.dx / scale, delta.dy / scale)
+      },
+      [getTransform, applyOffset],
+    )
 
-      // Update position in real-time (optimistic update)
-      const noteElement = document.querySelector(`[data-note-id="${note.id}"]`) as HTMLElement
-      if (noteElement) {
-        noteElement.style.left = `${canvasX}px`
-        noteElement.style.top = `${canvasY}px`
-      }
-    }, [isDragging, dragOffset, note.id, transform])
-
-    const handleMouseUp = React.useCallback(async (e: MouseEvent) => {
-      if (!isDragging) return
-
-      setIsDragging(false)
-
-      // Get the viewport canvas container (not the transformed one)
-      const viewportContainer = document.querySelector('.relative.w-full.h-full.overflow-hidden') as HTMLElement
-      if (!viewportContainer) return
-
-      const containerRect = viewportContainer.getBoundingClientRect()
-      
-      // Calculate position relative to viewport, then convert to canvas coordinates
-      const viewportX = e.clientX - containerRect.left
-      const viewportY = e.clientY - containerRect.top
-      
-      // Convert viewport coordinates to canvas coordinates accounting for transform and scale
-      const finalX = (viewportX - transform.x) / transform.scale - dragOffset.x
-      const finalY = (viewportY - transform.y) / transform.scale - dragOffset.y
-
-      // Save final position to database
-      await updateNotePosition(note.id, finalX, finalY)
-    }, [isDragging, dragOffset, note.id, updateNotePosition, transform])
-
-    React.useEffect(() => {
-      if (isDragging) {
-        document.addEventListener('mousemove', handleMouseMove)
-        document.addEventListener('mouseup', handleMouseUp)
-        return () => {
-          document.removeEventListener('mousemove', handleMouseMove)
-          document.removeEventListener('mouseup', handleMouseUp)
+    const handleEnd = React.useCallback(
+      (delta: GestureDelta, moved: boolean) => {
+        if (!moved) {
+          // A plain click. Writing a position here used to mark the note dirty
+          // on every click.
+          applyOffset(0, 0)
+          return
         }
-      }
-    }, [isDragging, handleMouseMove, handleMouseUp])
+
+        const { scale } = getTransform()
+        const finalX = note.positionX + delta.dx / scale
+        const finalY = note.positionY + delta.dy / scale
+
+        applyOffset(delta.dx / scale, delta.dy / scale)
+
+        if (Math.round(finalX) === Math.round(note.positionX) &&
+            Math.round(finalY) === Math.round(note.positionY)) {
+          // No change to commit, so the layout effect would never fire.
+          applyOffset(0, 0)
+          return
+        }
+
+        void updateNotePosition(note.id, finalX, finalY)
+      },
+      [getTransform, applyOffset, note.id, note.positionX, note.positionY, updateNotePosition],
+    )
+
+    const drag = usePointerGesture({
+      shouldStart: shouldStartDrag,
+      onStart: handleStart,
+      onMove: handleMove,
+      onEnd: handleEnd,
+    })
+
+    const setRefs = React.useCallback(
+      (element: HTMLDivElement | null) => {
+        wrapperRef.current = element
+        if (typeof ref === 'function') ref(element)
+        else if (ref) ref.current = element
+      },
+      [ref],
+    )
 
     return (
       <div
-        ref={ref}
+        ref={setRefs}
         data-note-id={note.id}
         className={cn(
-          "absolute transition-shadow duration-200 z-10 opacity-100",
-          isDragging ? "cursor-grabbing shadow-lg z-50" : "cursor-grab",
-          className
+          'absolute transition-shadow duration-200',
+          drag.isActive ? 'cursor-grabbing shadow-lg' : 'cursor-grab',
+          className,
         )}
         style={{
           left: `${note.positionX}px`,
           top: `${note.positionY}px`,
-          zIndex: isDragging ? 1000 : Math.max(note.zIndex, 10),
-          visibility: 'visible',
-          display: 'block',
+          // translate3d promotes the note to its own compositor layer, so a
+          // drag costs no layout and no React renders.
+          transform: 'translate3d(var(--drag-x, 0px), var(--drag-y, 0px), 0)',
+          zIndex: drag.isActive ? Z_NOTE_ACTIVE : note.zIndex,
         }}
-        onMouseDown={handleMouseDown}
+        onPointerDown={drag.onPointerDown}
+        onFocusCapture={handleStart}
       >
-        <ResizableStickyNote
-          note={note}
-          className={cn(
-            "pointer-events-auto select-text opacity-100 visible",
-            !isDragging && "hover:cursor-grab",
-            isDragging && "cursor-grabbing"
-          )}
-        />
+        <ResizableStickyNote note={note} className="pointer-events-auto select-text" />
       </div>
     )
-  }
+  },
 )
 
-DraggableStickyNote.displayName = "DraggableStickyNote"
+DraggableStickyNote.displayName = 'DraggableStickyNote'
 
 export { DraggableStickyNote }

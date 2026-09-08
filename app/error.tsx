@@ -17,7 +17,7 @@ export default function Error({
   }, [error])
 
   return (
-    <div className="min-h-screen bg-red-950/90 flex items-center justify-center px-4">
+    <div className="h-full overflow-y-auto bg-red-950/90 flex items-center justify-center px-4 py-8">
       <div className="text-center max-w-md mx-auto">
         <div className="mb-8">
           {/* Error Icon */}
@@ -38,8 +38,14 @@ export default function Error({
           </div>
           
           <h1 className="text-3xl font-bold text-white mb-4">Something went wrong!</h1>
+          {/*
+            Deliberately narrower than the previous claim that "your sticky
+            notes are safe". Notes already saved to your account are safe;
+            edits made in the last second or two may not have been written yet.
+          */}
           <p className="text-xl text-white/80 mb-8">
-            Don&apos;t worry, your sticky notes are safe. Let&apos;s get you back to organizing your ideas.
+            Notes already saved to your account are safe. Very recent edits may not have
+            been written yet.
           </p>
         </div>
         
@@ -61,7 +67,9 @@ export default function Error({
         
         <div className="mt-8 text-white/60 text-sm">
           <p>If this problem persists, please contact support.</p>
-          <p className="mt-2">Error ID: {error.digest}</p>
+          {/* digest is only set for server-side errors; rendering it
+              unconditionally showed a bare "Error ID:" with nothing after it. */}
+          {error.digest ? <p className="mt-2">Error ID: {error.digest}</p> : null}
         </div>
       </div>
     </div>

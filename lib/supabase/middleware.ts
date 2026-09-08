@@ -1,24 +1,27 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
-import { hasEnvVars } from "../utils";
+import { isSupabaseConfigured, supabaseAnonKey, supabaseUrl } from "../utils";
 
+/**
+ * Rotates the Supabase session cookies on every request.
+ *
+ * This deliberately does NOT gate the response on whether a user is signed in.
+ * Every route in this app is public: the homepage renders for anonymous
+ * visitors and is the app's only page, sign-in is an OAuth button in the
+ * navbar, and there is no login route to redirect to. An auth gate here would
+ * 302 anonymous requests for /robots.txt, /sitemap.xml and /manifest.json.
+ */
 export async function updateSession(request: NextRequest) {
-  let supabaseResponse = NextResponse.next({
-    request,
-  });
+  let supabaseResponse = NextResponse.next({ request });
 
-  // If the env vars are not set, skip middleware check. You can remove this
-  // once you setup the project.
-  if (!hasEnvVars) {
+  if (!isSupabaseConfigured || !supabaseUrl || !supabaseAnonKey) {
     return supabaseResponse;
   }
 
-  // With Fluid compute, don't put this client in a global environment
-  // variable. Always create a new one on each request.
-  const supabase = createServerClient(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
+  try {
+    // With Fluid compute, don't put this client in a global variable. Always
+    // create a new one on each request.
+    const supabase = createServerClient(supabaseUrl, supabaseAnonKey, {
       cookies: {
         getAll() {
           return request.cookies.getAll();
@@ -27,50 +30,29 @@ export async function updateSession(request: NextRequest) {
           cookiesToSet.forEach(({ name, value }) =>
             request.cookies.set(name, value),
           );
-          supabaseResponse = NextResponse.next({
-            request,
-          });
+          supabaseResponse = NextResponse.next({ request });
           cookiesToSet.forEach(({ name, value, options }) =>
             supabaseResponse.cookies.set(name, value, options),
           );
         },
       },
-    },
-  );
+    });
 
-  // Do not run code between createServerClient and
-  // supabase.auth.getClaims(). A simple mistake could make it very hard to debug
-  // issues with users being randomly logged out.
-
-  // IMPORTANT: If you remove getClaims() and you use server-side rendering
-  // with the Supabase client, your users may be randomly logged out.
-  const { data } = await supabase.auth.getClaims();
-  const user = data?.claims;
-
-  if (
-    request.nextUrl.pathname !== "/" &&
-    !user &&
-    !request.nextUrl.pathname.startsWith("/login") &&
-    !request.nextUrl.pathname.startsWith("/auth")
-  ) {
-    // no user, potentially respond by redirecting the user to the login page
-    const url = request.nextUrl.clone();
-    url.pathname = "/auth/login";
-    return NextResponse.redirect(url);
+    // Do not run code between createServerClient and getClaims(). Touching the
+    // session is what lets @supabase/ssr rotate an expiring refresh token and
+    // write the new cookies onto supabaseResponse. Remove this call and users
+    // get randomly logged out.
+    const { error } = await supabase.auth.getClaims();
+    if (error) {
+      console.warn("[middleware] session refresh failed:", error.message);
+    }
+  } catch (err) {
+    // Never turn an auth hiccup into a 500 on a public, indexed page.
+    console.error("[middleware] unexpected error refreshing session:", err);
   }
 
-  // IMPORTANT: You *must* return the supabaseResponse object as it is.
-  // If you're creating a new response object with NextResponse.next() make sure to:
-  // 1. Pass the request in it, like so:
-  //    const myNewResponse = NextResponse.next({ request })
-  // 2. Copy over the cookies, like so:
-  //    myNewResponse.cookies.setAll(supabaseResponse.cookies.getAll())
-  // 3. Change the myNewResponse object to fit your needs, but avoid changing
-  //    the cookies!
-  // 4. Finally:
-  //    return myNewResponse
-  // If this is not done, you may be causing the browser and server to go out
-  // of sync and terminate the user's session prematurely!
-
+  // IMPORTANT: return supabaseResponse as it is. It carries the rotated session
+  // cookies. Building a fresh NextResponse here would discard them, and if the
+  // refresh token was already consumed server-side that logs the user out.
   return supabaseResponse;
 }

@@ -1,9 +1,11 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { Analytics } from '@vercel/analytics/react';
 import { AuthProvider } from "@/lib/auth/AuthContext";
 import { StickyNoteProvider } from "@/lib/context/StickyNoteContext";
+import { CanvasTransformProvider } from "@/lib/context/CanvasTransformContext";
 import { NavbarWithStickyNotes } from "./NavbarWithStickyNotes";
+import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -16,13 +18,28 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+/**
+ * Viewport is its own export in the App Router. It used to be a hand-written
+ * <meta> tag in <head> that also set maximum-scale=1 and user-scalable=no,
+ * which blocked pinch-zoom entirely (a WCAG 1.4.4 failure) on an app whose
+ * manifest advertises an installable mobile experience.
+ */
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 5,
+  userScalable: true,
+  themeColor: "#991b1b",
+  colorScheme: "dark",
+};
+
 export const metadata: Metadata = {
-  metadataBase: new URL('https://stickynoter.org'),
+  metadataBase: new URL(SITE_URL),
   title: {
     default: "StickyNoter - Digital Sticky Notes & Visual Organization Tool",
     template: "%s | StickyNoter"
   },
-  description: "Transform your ideas into organized digital sticky notes. Create, drag, resize, and color-code notes on an infinite canvas. Perfect for brainstorming, project planning, and visual thinking. Free online sticky note app with real-time sync.",
+  description: "Transform your ideas into organized digital sticky notes. Create, drag, resize, and color-code notes on an infinite canvas. Perfect for brainstorming, project planning, and visual thinking. Free online sticky note app with automatic saving.",
   keywords: [
     "sticky notes",
     "digital notes",
@@ -32,7 +49,6 @@ export const metadata: Metadata = {
     "mind mapping",
     "note taking",
     "productivity app",
-    "collaborative notes",
     "visual thinking",
     "drag and drop notes",
     "infinite canvas",
@@ -46,22 +62,17 @@ export const metadata: Metadata = {
   generator: "Next.js",
   category: "Productivity",
   classification: "Productivity Tool",
+  manifest: "/manifest.json",
   openGraph: {
     type: "website",
     locale: "en_US",
-    url: "https://stickynoter.org",
+    url: SITE_URL,
     siteName: "StickyNoter",
     title: "StickyNoter - Digital Sticky Notes & Visual Organization Tool",
     description: "Transform your ideas into organized digital sticky notes. Create, drag, resize, and color-code notes on an infinite canvas. Perfect for brainstorming, project planning, and visual thinking.",
-    images: [
-      {
-        url: "/opengraph-image.png",
-        width: 1200,
-        height: 630,
-        alt: "StickyNoter - Digital Sticky Notes App Interface",
-        type: "image/png"
-      }
-    ]
+    // No explicit `images` here on purpose. An explicit list overrides the
+    // file-convention tag, which is what left app/opengraph-image.tsx
+    // generating an image no crawler ever referenced.
   },
   twitter: {
     card: "summary_large_image",
@@ -69,7 +80,6 @@ export const metadata: Metadata = {
     creator: "@stickynoter",
     title: "StickyNoter - Digital Sticky Notes & Visual Organization Tool",
     description: "Transform your ideas into organized digital sticky notes. Create, drag, resize, and color-code notes on an infinite canvas.",
-    images: ["/opengraph-image.png"]
   },
   robots: {
     index: true,
@@ -82,13 +92,11 @@ export const metadata: Metadata = {
       "max-snippet": -1
     }
   },
-  verification: {
-    google: "your-google-verification-code",
-    yandex: "your-yandex-verification-code",
-    yahoo: "your-yahoo-verification-code"
-  },
+  // `verification` is deliberately omitted: it previously shipped the literal
+  // placeholders "your-google-verification-code" and friends as real meta tags.
+  // Add it back with actual tokens when the properties are claimed.
   alternates: {
-    canonical: "https://stickynoter.org"
+    canonical: SITE_URL
   },
   other: {
     "apple-mobile-web-app-capable": "yes",
@@ -97,8 +105,6 @@ export const metadata: Metadata = {
     "mobile-web-app-capable": "yes",
     "msapplication-TileColor": "#991b1b",
     "msapplication-TileImage": "/android-chrome-192x192.png",
-    "theme-color": "#991b1b",
-    "color-scheme": "dark",
     "format-detection": "telephone=no"
   },
   icons: {
@@ -116,67 +122,73 @@ export const metadata: Metadata = {
   }
 };
 
+const structuredData = {
+  "@context": "https://schema.org",
+  "@type": "WebApplication",
+  name: "StickyNoter",
+  description:
+    "Transform your ideas into organized digital sticky notes. Create, drag, resize, and color-code notes on an infinite canvas.",
+  url: SITE_URL,
+  applicationCategory: "ProductivityApplication",
+  operatingSystem: "Any",
+  offers: {
+    "@type": "Offer",
+    price: "0",
+    priceCurrency: "USD",
+  },
+  author: {
+    "@type": "Person",
+    name: "Ibrahim El Khansa",
+    url: "https://ibrahimelkhansa.com",
+  },
+  publisher: {
+    "@type": "Person",
+    name: "Ibrahim El Khansa",
+    url: "https://ibrahimelkhansa.com",
+  },
+  featureList: [
+    "Drag and drop sticky notes",
+    "Infinite canvas workspace",
+    "Color-coded organization",
+    "Resizable notes",
+    // "Real-time synchronization" was listed here and is not a feature: saving
+    // is a debounced batch upsert, with no realtime subscription anywhere.
+    "Automatic saving",
+    "Pinch to zoom and touch support",
+  ],
+};
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className="dark h-full overflow-hidden">
+    <html lang="en" className="dark">
       <head>
-        <link rel="canonical" href="https://stickynoter.org" />
-        <link rel="manifest" href="/manifest.json" />
-        <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+        {/* The canonical link and the manifest link are both emitted from the
+            metadata export above, so they are not repeated here. */}
         <script
           type="application/ld+json"
-          dangerouslySetInnerHTML={{
-            __html: JSON.stringify({
-              "@context": "https://schema.org",
-              "@type": "WebApplication",
-              "name": "StickyNoter",
-              "description": "Transform your ideas into organized digital sticky notes. Create, drag, resize, and color-code notes on an infinite canvas.",
-              "url": "https://stickynoter.org",
-              "applicationCategory": "ProductivityApplication",
-              "operatingSystem": "Any",
-              "offers": {
-                "@type": "Offer",
-                "price": "0",
-                "priceCurrency": "USD"
-              },
-              "author": {
-                "@type": "Person",
-                "name": "Ibrahim El Khansa",
-                "url": "https://ibrahimelkhansa.com"
-              },
-              "publisher": {
-                "@type": "Person",
-                "name": "Ibrahim El Khansa",
-                "url": "https://ibrahimelkhansa.com"
-              },
-              "featureList": [
-                "Drag and drop sticky notes",
-                "Infinite canvas workspace",
-                "Color-coded organization",
-                "Real-time synchronization",
-                "Resizable notes",
-                "Auto-save functionality"
-              ]
-            })
-          }}
+          dangerouslySetInnerHTML={{ __html: JSON.stringify(structuredData) }}
         />
       </head>
       <body
-        className={`${geistSans.variable} ${geistMono.variable} antialiased bg-red-950/90 text-white h-full m-0 p-0 overflow-hidden`}
+        className={`${geistSans.variable} ${geistMono.variable} flex h-dvh flex-col overflow-hidden antialiased`}
       >
         <AuthProvider>
-          <StickyNoteProvider>
-            <div className="flex min-h-screen flex-col w-full h-full overflow-hidden">
+          <CanvasTransformProvider>
+            <StickyNoteProvider>
               <NavbarWithStickyNotes />
-              <div className="flex-1 w-full h-full overflow-hidden">
-                {children}
-              </div>
-            </div>
-          </StickyNoteProvider>
+              {/*
+                min-h-0 is what lets this shrink inside the flex column. The
+                previous layout stacked a fixed 80px navbar above a full-height
+                region inside a 100vh box, so the bottom 80px of the canvas was
+                clipped and unreachable.
+              */}
+              <main className="min-h-0 w-full flex-1 overflow-hidden">{children}</main>
+            </StickyNoteProvider>
+          </CanvasTransformProvider>
         </AuthProvider>
         <Analytics />
       </body>

@@ -1,13 +1,114 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
-html, body {
-  height: 100%;
-  margin: 0;
-  padding: 0;
-  overflow: hidden; /* Prevent scrollbars on the page */
+/*
+ * Tailwind v4 defaults `dark:` to prefers-color-scheme. The app sets
+ * <html class="dark"> explicitly, so without this every `dark:` utility in the
+ * codebase silently followed the OS preference instead.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/*
+ * Design tokens. components.json declares "cssVariables": true and the shadcn
+ * atoms reference bg-background, text-primary, border-input,
+ * text-muted-foreground, ring-ring, destructive and friends. Without these
+ * every one of those classes compiled to nothing, which is why 8 of 10 Button
+ * variants had no visible focus ring.
+ */
+:root {
+  --radius: 0.625rem;
+
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --card: oklch(0.205 0 0);
+  --card-foreground: oklch(0.985 0 0);
+  --popover: oklch(0.205 0 0);
+  --popover-foreground: oklch(0.985 0 0);
+
+  /* Red accent, matching the navbar and buttons. */
+  --primary: oklch(0.63 0.19 25.5);
+  --primary-foreground: oklch(0.985 0 0);
+  --secondary: oklch(0.3 0.07 25.5);
+  --secondary-foreground: oklch(0.985 0 0);
+
+  --muted: oklch(0.269 0 0);
+  --muted-foreground: oklch(0.708 0 0);
+  --accent: oklch(0.269 0 0);
+  --accent-foreground: oklch(0.985 0 0);
+
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(0.32 0.04 25.5);
+  --input: oklch(0.32 0.04 25.5);
+  --ring: oklch(0.63 0.19 25.5);
 }
 
-#__next {
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+html {
+  /*
+   * The canvas owns the viewport. Page scrolling is disabled deliberately, but
+   * the layout is a flex column sized in dvh so the navbar can grow (wrapping
+   * on narrow viewports or at high zoom) without clipping the canvas.
+   */
   height: 100%;
+  overflow: hidden;
+}
+
+body {
+  min-height: 100dvh;
+  height: 100dvh;
+  overflow: hidden;
+  background-color: var(--background);
+  color: var(--foreground);
+}
+
+/* The pan/zoom surface handles its own gestures; never let the browser
+   interpret a drag on it as a scroll or a swipe-back. */
+[data-canvas-viewport] {
+  touch-action: none;
+  overscroll-behavior: contain;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
 }

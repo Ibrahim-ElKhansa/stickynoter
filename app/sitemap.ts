@@ -1,21 +1,13 @@
 import { MetadataRoute } from 'next'
+import { SITE_URL } from '@/lib/site'
 
 export default function sitemap(): MetadataRoute.Sitemap {
-  const baseUrl = 'https://stickynoter.org'
-  
   return [
     {
-      url: baseUrl,
+      url: `${SITE_URL}/`,
       lastModified: new Date(),
       changeFrequency: 'daily',
       priority: 1,
     },
-    // Add more pages as your app grows
-    // {
-    //   url: `${baseUrl}/about`,
-    //   lastModified: new Date(),
-    //   changeFrequency: 'monthly',
-    //   priority: 0.8,
-    // },
   ]
 }
