@@ -38,7 +38,19 @@ export function Navbar({ className = '', onAddNote }: NavbarProps) {
         aria-label="Main"
         className="container mx-auto flex min-h-20 flex-wrap items-center justify-between gap-x-4 gap-y-2 px-4 py-2"
       >
-        <Logo />
+        {/*
+          The credit sits under the logo because the canvas fills the rest of
+          the screen and there is no footer to hold it.
+        */}
+        <div className="flex flex-col">
+          <Logo />
+          <a
+            href="https://ibrahimelkhansa.com"
+            className="ml-10 text-xs text-stone-400 underline-offset-2 hover:text-stone-200 hover:underline"
+          >
+            Built by Ibrahim El Khansa
+          </a>
+        </div>
 
         <div className="flex flex-wrap items-center gap-3">
           <Button variant="default" onClick={onAddNote}>
